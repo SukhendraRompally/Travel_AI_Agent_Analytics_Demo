@@ -23,7 +23,6 @@ from __future__ import annotations
 
 import json
 import logging
-import logging.config
 import os
 import uuid
 from contextlib import asynccontextmanager
@@ -488,9 +487,11 @@ class ChatAgent:
         return await self.expedia.search_hotels(destination, check_in, check_out)
 
     async def _call_confirm_booking(
-        self, booking_type: str, details: dict[str, Any]
+        self, booking_type: str, details: dict[str, Any] | None = None
     ) -> dict[str, Any]:
-        return await self.expedia.confirm_booking(booking_type, details)
+        # details is occasionally omitted by the LLM — default to empty dict
+        # so the call doesn't hard-crash and the agent can handle it gracefully
+        return await self.expedia.confirm_booking(booking_type, details or {})
 
 
 # ---------------------------------------------------------------------------
@@ -599,16 +600,14 @@ async def get_trace_endpoint(session_id: str) -> TraceResponse:
     Returns the full chronological timeline of all captured StateObjects
     for the given session, plus a Conviva-style summary.
 
-    Summary fields:
-      total_duration_ms   — wall clock time for the entire turn
-      state_count         — total number of states captured
-      latency_warnings    — states that exceeded 3000ms
-      failures            — states that ended in exception
-      llm_reasoning_ms    — Reasoning Latency (pure model think-time)
-      tool_call_ms        — Tool Latency (MockExpedia I/O time)
-
-    The llm_reasoning_ms / tool_call_ms split is the key observability
-    signal: it shows WHERE in the pipeline friction occurs.
+    Summary KPI fields (all computed server-side):
+      total_latency_s       — wall-clock seconds for the full turn
+      success_rate_pct      — % of tool calls that didn't FAIL
+      experience_score      — 0–100 UX quality score (−10/warn, −25/fail)
+      revenue_at_risk_usd   — failed tool calls × $1,200 avg booking value
+      reasoning_ratio_pct   — LLM think-time as % of total (Conviva insight)
+      llm_reasoning_ms      — pure model latency, isolated from tool I/O
+      tool_call_ms          — Expedia API latency, isolated from model
     """
     states = get_trace(session_id)
     summary = get_summary(session_id)
@@ -627,15 +626,16 @@ async def toggle_chaos() -> ChaosToggleResponse:
     Flips the global CHAOS_MODE flag in services.py.
 
     When CHAOS_MODE is True:
-      - confirm_booking sleeps 5 seconds (simulating automation timeout)
-      - Then raises HTTP 500:
-        'Automation Error: DOM Selector #checkout-btn not found (Stagehand Timeout)'
+      - search_flights and search_hotels lag 4.5–6.5s (always LATENCY_WARN)
+      - confirm_booking sleeps 4 seconds then raises HTTP 500:
+        'Automation Error: DOM Selector #checkout-button not found (Stagehand Timeout)'
 
     In the telemetry trace, this produces:
-      - A TOOL_CALL StateObject with status=FAIL
-      - duration_ms ≈ 5000 (the timeout period is visible)
+      - TOOL_CALL StateObjects with status=LATENCY_WARN on all searches
+      - A TOOL_CALL StateObject with status=FAIL on confirm_booking
+      - duration_ms ≈ 4000 on the failure (timeout period is visible)
       - metadata.chaos_triggered = true
-      - metadata.error_detail = the exact DOM selector error message
+      - metadata.error_detail = the structured DOM selector error dict
 
     This is the killer demo feature: the telemetry system captures not just
     that a failure occurred, but the full context of WHY and HOW LONG it took.
@@ -651,10 +651,10 @@ async def toggle_chaos() -> ChaosToggleResponse:
         message=(
             f"Chaos mode {status_word}. "
             + (
-                "confirm_booking will now fail after 5s with "
-                "'DOM Selector #checkout-btn not found (Stagehand Timeout)'."
+                "All searches will lag 4.5–6.5s (LATENCY_WARN). "
+                "confirm_booking will fail after 4s: DOM Selector #checkout-button not found."
                 if enabled
-                else "confirm_booking restored to normal operation."
+                else "All services restored to normal operation."
             )
         ),
     )

@@ -60,7 +60,9 @@ class MockExpedia:
         Returns:
             List of 3 flight option dicts ordered best-to-cheapest.
         """
-        lag = random.uniform(1.5, 4.0)
+        # Chaos mode: extend lag well beyond the 3s LATENCY_WARN threshold
+        # so every search shows as degraded in the telemetry timeline.
+        lag = random.uniform(4.5, 6.5) if CHAOS_MODE else random.uniform(1.5, 4.0)
         await asyncio.sleep(lag)
 
         origin = origin.upper()
@@ -132,7 +134,8 @@ class MockExpedia:
         Returns:
             List of 3 hotel option dicts ordered luxury-to-accessible.
         """
-        lag = random.uniform(1.5, 4.0)
+        # Chaos mode: same degradation as search_flights
+        lag = random.uniform(4.5, 6.5) if CHAOS_MODE else random.uniform(1.5, 4.0)
         await asyncio.sleep(lag)
 
         return [
@@ -211,16 +214,16 @@ class MockExpedia:
             Confirmation dict with booking reference and cost summary.
 
         Raises:
-            HTTPException(500): When CHAOS_MODE is True, after a 5-second
+            HTTPException(500): When CHAOS_MODE is True, after a 4-second
             timeout, simulating a Stagehand browser-automation DOM failure.
             This is the exact error format a headless booking automation
-            would surface when #checkout-btn is not found in the DOM.
+            would surface when #checkout-button is not found in the DOM.
         """
         if CHAOS_MODE:
             # Simulate the full browser automation timeout before failing.
             # 6s sleep ensures telemetry captures FAIL + ~6000ms duration —
             # both the failure AND the delay are visible in the dashboard.
-            await asyncio.sleep(6.0)
+            await asyncio.sleep(4.0)
             raise HTTPException(
                 status_code=500,
                 detail={
@@ -228,7 +231,7 @@ class MockExpedia:
                     "target": "#checkout-button",
                     "message": "Automation Error: DOM Selector #checkout-button not found (Stagehand Timeout)",
                     "automation_framework": "Stagehand",
-                    "timeout_ms": 6000,
+                    "timeout_ms": 4000,
                 },
             )
 
