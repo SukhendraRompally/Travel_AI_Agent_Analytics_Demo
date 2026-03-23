@@ -38,7 +38,7 @@ from pydantic import BaseModel
 import services  # module import (NOT from services import CHAOS_MODE) — see toggle endpoint
 from services import MockExpedia
 from telemetry import (
-    StateName, append_message, get_messages, get_summary, get_trace, record_state,
+    StateName, StateStatus, append_message, get_messages, get_summary, get_trace, record_state,
 )
 
 load_dotenv()
@@ -352,14 +352,14 @@ class ChatAgent:
                             tool_state.metadata["confirmation_number"] = tool_result["confirmation_number"]
 
                     except HTTPException as exc:
-                        # Chaos mode 500 — telemetry records FAIL status automatically.
-                        # We don't re-raise: surface the error to the LLM so it can
-                        # respond gracefully (apologize and suggest alternatives).
-                        # exc.detail is a structured dict from services.py chaos path.
+                        # Chaos mode 500 — we catch here so the LLM can respond
+                        # gracefully, but we must manually force FAIL status because
+                        # the exception never propagates to record_state.__aexit__.
                         tool_result = {
                             "error": exc.detail,
                             "status_code": exc.status_code,
                         }
+                        tool_state.status = StateStatus.FAIL  # force — exception was swallowed
                         tool_state.metadata["chaos_triggered"] = True
                         # Store the full structured error so /trace exposes it
                         tool_state.metadata["error_detail"] = (
