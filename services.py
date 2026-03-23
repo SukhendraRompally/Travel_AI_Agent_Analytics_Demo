@@ -217,16 +217,19 @@ class MockExpedia:
             would surface when #checkout-btn is not found in the DOM.
         """
         if CHAOS_MODE:
-            # Simulate the browser automation timeout period before failing.
-            # The 5-second sleep ensures telemetry captures this as both
-            # FAIL status AND a ~5000ms duration — doubly visible in the dashboard.
-            await asyncio.sleep(5.0)
+            # Simulate the full browser automation timeout before failing.
+            # 6s sleep ensures telemetry captures FAIL + ~6000ms duration —
+            # both the failure AND the delay are visible in the dashboard.
+            await asyncio.sleep(6.0)
             raise HTTPException(
                 status_code=500,
-                detail=(
-                    "Automation Error: DOM Selector #checkout-btn not found "
-                    "(Stagehand Timeout)"
-                ),
+                detail={
+                    "error_type": "DOM_SELECTOR_NOT_FOUND",
+                    "target": "#checkout-button",
+                    "message": "Automation Error: DOM Selector #checkout-button not found (Stagehand Timeout)",
+                    "automation_framework": "Stagehand",
+                    "timeout_ms": 6000,
+                },
             )
 
         lag = random.uniform(1.5, 4.0)

@@ -38,7 +38,9 @@ from pydantic import BaseModel
 
 import services  # module import (NOT from services import CHAOS_MODE) — see toggle endpoint
 from services import MockExpedia
-from telemetry import StateName, get_summary, get_trace, record_state
+from telemetry import (
+    StateName, append_message, get_messages, get_summary, get_trace, record_state,
+)
 
 load_dotenv()
 
@@ -199,6 +201,7 @@ class TraceResponse(BaseModel):
     session_id: str
     states: list[dict[str, Any]]
     summary: dict[str, Any]
+    messages: list[dict[str, Any]]  # full chat history for this session
 
 
 class ChaosToggleResponse(BaseModel):
@@ -262,10 +265,14 @@ class ChatAgent:
         # Phase 1: Classify intent before reasoning (fast, no tools)
         intent = await self._detect_intent(user_message)
 
-        # Build the conversation thread for the reasoning loop
+        # Load prior conversation history from SessionStore (empty on first turn)
+        history = get_messages(self.session_id)
+
+        # Build full message thread: system prompt + history + new user message
         messages: list[dict[str, Any]] = [
             {"role": "system", "content": SYSTEM_PROMPT},
-            {"role": "user",   "content": user_message},
+            *history,
+            {"role": "user", "content": user_message},
         ]
 
         # Phases 2–4: Reasoning + Tool Calls loop
@@ -301,7 +308,10 @@ class ChatAgent:
             if choice.finish_reason == "stop" or not choice.message.tool_calls:
                 if choice.message.content:
                     # Model gave us a final answer directly — no synthesis needed
-                    return choice.message.content
+                    final = choice.message.content
+                    append_message(self.session_id, {"role": "user", "content": user_message})
+                    append_message(self.session_id, {"role": "assistant", "content": final})
+                    return final
                 break  # No content, no tools — fall through to synthesis
 
             # Append the assistant's tool-calling turn to the thread
@@ -346,12 +356,17 @@ class ChatAgent:
                         # Chaos mode 500 — telemetry records FAIL status automatically.
                         # We don't re-raise: surface the error to the LLM so it can
                         # respond gracefully (apologize and suggest alternatives).
+                        # exc.detail is a structured dict from services.py chaos path.
                         tool_result = {
                             "error": exc.detail,
                             "status_code": exc.status_code,
                         }
                         tool_state.metadata["chaos_triggered"] = True
-                        tool_state.metadata["error_detail"] = exc.detail
+                        # Store the full structured error so /trace exposes it
+                        tool_state.metadata["error_detail"] = (
+                            exc.detail if isinstance(exc.detail, dict)
+                            else {"message": exc.detail}
+                        )
                         logger.warning(
                             "Chaos mode triggered for session %s: %s",
                             self.session_id[:8],
@@ -398,6 +413,10 @@ class ChatAgent:
                 "Please try rephrasing your request."
             )
             synth_state.metadata["response_length_chars"] = len(final_text)
+
+        # Persist this turn into SessionStore conversation history
+        append_message(self.session_id, {"role": "user", "content": user_message})
+        append_message(self.session_id, {"role": "assistant", "content": final_text})
 
         return final_text
 
@@ -598,6 +617,7 @@ async def get_trace_endpoint(session_id: str) -> TraceResponse:
         session_id=session_id,
         states=[s.model_dump() for s in states],
         summary=summary,
+        messages=get_messages(session_id),
     )
 
 

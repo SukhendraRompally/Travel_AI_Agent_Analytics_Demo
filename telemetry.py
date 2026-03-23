@@ -88,23 +88,30 @@ class StateObject(BaseModel):
 
 class SessionStore:
     """
-    Maps session_id → chronological list of StateObjects.
+    Single source of truth for a session: telemetry states AND chat history.
 
-    Intentionally simple: a plain dict in a single-process asyncio event loop
-    is race-condition-free. For horizontal scaling, swap the inner dict for
-    Redis with aioredis — the interface stays identical.
+    _states:   session_id → chronological list of StateObjects (telemetry)
+    _messages: session_id → conversation message thread (chat context)
+
+    Keeping both here means one place manages all per-session state,
+    and the /trace endpoint can return everything in a single lookup.
     """
 
     def __init__(self) -> None:
-        self._store: dict[str, list[StateObject]] = {}
+        self._states: dict[str, list[StateObject]] = {}
+        self._messages: dict[str, list[dict[str, Any]]] = {}
 
     def _ensure_session(self, session_id: str) -> None:
-        if session_id not in self._store:
-            self._store[session_id] = []
+        if session_id not in self._states:
+            self._states[session_id] = []
+        if session_id not in self._messages:
+            self._messages[session_id] = []
+
+    # --- Telemetry state methods ---
 
     def append(self, session_id: str, state: StateObject) -> None:
         self._ensure_session(session_id)
-        self._store[session_id].append(state)
+        self._states[session_id].append(state)
         logger.debug(
             "Telemetry [%s...] %s → %s (%.0fms)",
             session_id[:8],
@@ -114,10 +121,23 @@ class SessionStore:
         )
 
     def get_trace(self, session_id: str) -> list[StateObject]:
-        return list(self._store.get(session_id, []))
+        return list(self._states.get(session_id, []))
+
+    # --- Conversation history methods ---
+
+    def get_messages(self, session_id: str) -> list[dict[str, Any]]:
+        """Returns the stored conversation history (excludes system prompt)."""
+        self._ensure_session(session_id)
+        return self._messages[session_id]
+
+    def append_message(self, session_id: str, message: dict[str, Any]) -> None:
+        """Appends a single message dict (role + content) to the session history."""
+        self._ensure_session(session_id)
+        self._messages[session_id].append(message)
 
     def clear(self, session_id: str) -> None:
-        self._store.pop(session_id, None)
+        self._states.pop(session_id, None)
+        self._messages.pop(session_id, None)
 
 
 # Module-level singleton — one store for the lifetime of the process.
@@ -193,6 +213,16 @@ async def record_state(
 def get_trace(session_id: str) -> list[StateObject]:
     """Returns the full chronological list of StateObjects for a session."""
     return _store.get_trace(session_id)
+
+
+def get_messages(session_id: str) -> list[dict[str, Any]]:
+    """Returns the persistent conversation history for a session."""
+    return _store.get_messages(session_id)
+
+
+def append_message(session_id: str, message: dict[str, Any]) -> None:
+    """Appends a message to the session's persistent conversation history."""
+    _store.append_message(session_id, message)
 
 
 def get_summary(session_id: str) -> dict[str, Any]:
