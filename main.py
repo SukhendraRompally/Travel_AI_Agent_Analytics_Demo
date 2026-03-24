@@ -654,7 +654,8 @@ async def toggle_chaos() -> ChaosToggleResponse:
             f"Chaos mode {status_word}. "
             + (
                 "All searches will lag 4.5–6.5s (LATENCY_WARN). "
-                "confirm_booking will fail after 4s: DOM Selector #checkout-button not found."
+                "confirm_booking will randomly fail with: DOM timeout, CAPTCHA, "
+                "inventory depletion, payment gateway failure, API 503, session expiry, or price change."
                 if enabled
                 else "All services restored to normal operation."
             )

@@ -6,9 +6,12 @@ Every method sleeps for 1.5–4.0 seconds to mirror real booking API
 response times — ensuring the telemetry system reliably surfaces
 LATENCY_WARN states during demos.
 
-CHAOS_MODE is the killer demo feature: when enabled, confirm_booking
-simulates a Stagehand browser-automation timeout, producing a FAIL
-state in the telemetry trace with a DOM selector error in the metadata.
+CHAOS_MODE is the killer demo feature: when enabled, searches degrade
+to 4.5–6.5s lag (LATENCY_WARN) and confirm_booking randomly picks one
+of seven realistic failure scenarios — DOM timeout, CAPTCHA, inventory
+depletion, payment gateway failure, API 503, session expiry, or price
+change — each with its own realistic sleep duration and structured error
+payload visible in the telemetry trace metadata.
 """
 
 from __future__ import annotations
@@ -27,6 +30,71 @@ from fastapi import HTTPException
 # not `from services import CHAOS_MODE` (a snapshot at import time).
 # Reading `services.CHAOS_MODE` at call time picks up live mutations.
 CHAOS_MODE: bool = False
+
+# ---------------------------------------------------------------------------
+# Chaos failure scenarios — randomly selected on each confirm_booking call
+# ---------------------------------------------------------------------------
+# Each entry has a `sleep_s` (realistic timeout duration for that failure type)
+# plus the structured error payload stored verbatim in telemetry metadata.
+# sleep_s is stripped before raising so it doesn't appear in the error detail.
+CHAOS_SCENARIOS: list[dict[str, Any]] = [
+    {
+        "sleep_s": 4.0,
+        "error_type": "DOM_SELECTOR_NOT_FOUND",
+        "target": "#checkout-button",
+        "message": "Automation Error: DOM Selector #checkout-button not found (Stagehand Timeout)",
+        "automation_framework": "Stagehand",
+        "timeout_ms": 4000,
+    },
+    {
+        "sleep_s": 2.0,
+        "error_type": "CAPTCHA_TRIGGERED",
+        "target": "#captcha-challenge",
+        "message": "Bot detection triggered: CAPTCHA challenge appeared, automation blocked",
+        "automation_framework": "Stagehand",
+        "timeout_ms": 2000,
+    },
+    {
+        "sleep_s": 0.5,
+        "error_type": "INVENTORY_DEPLETED",
+        "target": "booking-api/reserve",
+        "message": "Booking rejected: Selected fare is no longer available — seat sold between search and checkout.",
+        "automation_framework": "ExpediaAPI",
+        "timeout_ms": 500,
+    },
+    {
+        "sleep_s": 6.0,
+        "error_type": "PAYMENT_GATEWAY_TIMEOUT",
+        "target": "payment-gateway/charge",
+        "message": "Payment gateway timeout: No response after 6000ms. Transaction not processed.",
+        "automation_framework": "PaymentGateway",
+        "timeout_ms": 6000,
+    },
+    {
+        "sleep_s": 1.0,
+        "error_type": "BOOKING_API_503",
+        "target": "api.expedia.com/v3/bookings",
+        "message": "Booking API unavailable: Service returned HTTP 503. Upstream provider temporarily down.",
+        "automation_framework": "ExpediaAPI",
+        "timeout_ms": 1000,
+    },
+    {
+        "sleep_s": 1.0,
+        "error_type": "SESSION_EXPIRED",
+        "target": "booking-session/validate",
+        "message": "Booking session expired: Search session token is no longer valid. Please re-search.",
+        "automation_framework": "ExpediaAPI",
+        "timeout_ms": 1000,
+    },
+    {
+        "sleep_s": 0.8,
+        "error_type": "PRICE_CHANGED",
+        "target": "booking-api/price-lock",
+        "message": "Fare no longer valid: Price increased since search. Booking rejected by pricing engine.",
+        "automation_framework": "ExpediaAPI",
+        "timeout_ms": 800,
+    },
+]
 
 
 class MockExpedia:
@@ -214,25 +282,19 @@ class MockExpedia:
             Confirmation dict with booking reference and cost summary.
 
         Raises:
-            HTTPException(500): When CHAOS_MODE is True, after a 4-second
-            timeout, simulating a Stagehand browser-automation DOM failure.
-            This is the exact error format a headless booking automation
-            would surface when #checkout-button is not found in the DOM.
+            HTTPException(500): When CHAOS_MODE is True, randomly picks one
+            of seven failure scenarios from CHAOS_SCENARIOS — each with its
+            own realistic sleep duration and structured error payload. The
+            sleep makes duration_ms realistic for that failure type (e.g.
+            6s for payment timeout, 0.5s for instant inventory rejection).
+            The error payload lands in telemetry metadata["error_detail"].
         """
         if CHAOS_MODE:
-            # Simulate the full browser automation timeout before failing.
-            # 6s sleep ensures telemetry captures FAIL + ~6000ms duration —
-            # both the failure AND the delay are visible in the dashboard.
-            await asyncio.sleep(4.0)
+            scenario = random.choice(CHAOS_SCENARIOS)
+            await asyncio.sleep(scenario["sleep_s"])
             raise HTTPException(
                 status_code=500,
-                detail={
-                    "error_type": "DOM_SELECTOR_NOT_FOUND",
-                    "target": "#checkout-button",
-                    "message": "Automation Error: DOM Selector #checkout-button not found (Stagehand Timeout)",
-                    "automation_framework": "Stagehand",
-                    "timeout_ms": 4000,
-                },
+                detail={k: v for k, v in scenario.items() if k != "sleep_s"},
             )
 
         lag = random.uniform(1.5, 4.0)
