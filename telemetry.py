@@ -15,7 +15,7 @@ from __future__ import annotations
 
 import logging
 from contextlib import asynccontextmanager
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 from enum import Enum
 from typing import Any, AsyncGenerator
 
@@ -186,11 +186,13 @@ async def record_state(
         state.end_time = end_dt.isoformat()
         start_dt = datetime.fromisoformat(state.start_time)
         state.duration_ms = (end_dt - start_dt).total_seconds() * 1000
-        state.status = (
-            StateStatus.LATENCY_WARN
-            if state.duration_ms > LATENCY_WARN_THRESHOLD_MS
-            else StateStatus.SUCCESS
-        )
+        # Don't override if caller already set FAIL (caught exception inside the block)
+        if state.status != StateStatus.FAIL:
+            state.status = (
+                StateStatus.LATENCY_WARN
+                if state.duration_ms > LATENCY_WARN_THRESHOLD_MS
+                else StateStatus.SUCCESS
+            )
 
     except Exception:
         # __aexit__ failure path — compute timing before re-raising
@@ -225,6 +227,51 @@ def append_message(session_id: str, message: dict[str, Any]) -> None:
     _store.append_message(session_id, message)
 
 
+_FALLBACK_BOOKING_VALUE_USD = 1200.0
+
+
+def _extract_booking_value(state: StateObject) -> float:
+    """
+    Extract the actual transaction value from a failed confirm_booking state.
+
+    The booking details passed to confirm_booking are stored verbatim in
+    metadata["args"]["details"] — the same dict the LLM assembled from
+    search results. We pull the price directly rather than guessing.
+
+    Logic:
+      - Flight: details["price_usd"] is the per-seat fare already set
+      - Hotel:  details["price_per_night_usd"] × nights (derived from
+                check_in / check_out dates in the same details dict)
+      - Fallback: $1,200 conservative average when no price data present
+    """
+    details: dict[str, Any] = state.metadata.get("args", {}).get("details") or {}
+
+    # Flight booking — price is per-seat total
+    if "price_usd" in details:
+        try:
+            return float(details["price_usd"])
+        except (TypeError, ValueError):
+            pass
+
+    # Hotel booking — nightly rate × number of nights
+    if "price_per_night_usd" in details:
+        try:
+            nightly = float(details["price_per_night_usd"])
+            check_in_str = details.get("check_in", "")
+            check_out_str = details.get("check_out", "")
+            if check_in_str and check_out_str:
+                nights = (
+                    date.fromisoformat(check_out_str) - date.fromisoformat(check_in_str)
+                ).days
+                if nights > 0:
+                    return nightly * nights
+            return nightly  # single night if dates missing or invalid
+        except (TypeError, ValueError):
+            pass
+
+    return _FALLBACK_BOOKING_VALUE_USD
+
+
 def get_summary(session_id: str) -> dict[str, Any]:
     """
     Computes aggregate statistics over a session's trace.
@@ -253,7 +300,7 @@ def get_summary(session_id: str) -> dict[str, Any]:
             "success_rate_pct": 100.0,
             "reasoning_ratio_pct": 0.0,
             "experience_score": 100,
-            "revenue_at_risk_usd": 0,
+            "revenue_at_risk_usd": 0.0,
         }
 
     total_ms = round(sum(s.duration_ms for s in states), 2)
@@ -300,10 +347,15 @@ def get_summary(session_id: str) -> dict[str, Any]:
     experience_score = max(0, 100 - (latency_warnings * 10) - (failures * 25))
 
     # --- KPI 5: Revenue at Risk ---
-    # Only FAIL states represent a lost booking — LATENCY_WARN is friction, not loss.
-    # $1,200 = conservative average luxury flight/hotel booking value.
-    AVERAGE_BOOKING_VALUE_USD = 1200
-    revenue_at_risk_usd = tool_calls_failed * AVERAGE_BOOKING_VALUE_USD
+    # Only FAIL states on confirm_booking represent lost transactions.
+    # We extract the actual price from the tool call args stored in metadata —
+    # flight price_usd directly, hotel price_per_night_usd × nights.
+    # Falls back to $1,200 average only when no price data is available.
+    failed_bookings = [
+        s for s in tool_calls
+        if s.status == StateStatus.FAIL and s.metadata.get("tool_name") == "confirm_booking"
+    ]
+    revenue_at_risk_usd = round(sum(_extract_booking_value(s) for s in failed_bookings), 2)
 
     return {
         # Raw counts — for frontend tables and detail views

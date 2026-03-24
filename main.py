@@ -150,8 +150,10 @@ TOOL_DEFINITIONS: list[dict[str, Any]] = [
                     "details": {
                         "type": "object",
                         "description": (
-                            "The flight_id or hotel_id from the search results, "
-                            "plus any required passenger or guest information."
+                            "The full object from search results for the chosen option. "
+                            "Must include the flight_id or hotel_id AND the price fields "
+                            "(price_usd for flights, price_per_night_usd + check_in + check_out for hotels). "
+                            "Copy the entire result object from the search — do not omit price fields."
                         ),
                     },
                 },
