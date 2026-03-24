@@ -230,30 +230,27 @@ def append_message(session_id: str, message: dict[str, Any]) -> None:
 _FALLBACK_BOOKING_VALUE_USD = 1200.0
 
 
-def _extract_booking_value(state: StateObject) -> float:
+def _extract_booking_value(state: StateObject, all_states: list[StateObject]) -> float:
     """
     Extract the actual transaction value from a failed confirm_booking state.
 
-    The booking details passed to confirm_booking are stored verbatim in
-    metadata["args"]["details"] — the same dict the LLM assembled from
-    search results. We pull the price directly rather than guessing.
-
-    Logic:
-      - Flight: details["price_usd"] is the per-seat fare already set
-      - Hotel:  details["price_per_night_usd"] × nights (derived from
-                check_in / check_out dates in the same details dict)
-      - Fallback: $1,200 conservative average when no price data present
+    Priority order:
+      1. details["price_usd"] in confirm_booking args (flight fare)
+      2. details["price_per_night_usd"] × nights in confirm_booking args (hotel)
+      3. Highest price from the most recent search TOOL_CALL before this failure
+         (used when the LLM omits price fields from confirm_booking args)
+      4. Fallback $1,200 average when no price data is available anywhere
     """
     details: dict[str, Any] = state.metadata.get("args", {}).get("details") or {}
 
-    # Flight booking — price is per-seat total
+    # 1. Flight price directly in args
     if "price_usd" in details:
         try:
             return float(details["price_usd"])
         except (TypeError, ValueError):
             pass
 
-    # Hotel booking — nightly rate × number of nights
+    # 2. Hotel nightly rate × nights in args
     if "price_per_night_usd" in details:
         try:
             nightly = float(details["price_per_night_usd"])
@@ -265,9 +262,37 @@ def _extract_booking_value(state: StateObject) -> float:
                 ).days
                 if nights > 0:
                     return nightly * nights
-            return nightly  # single night if dates missing or invalid
+            return nightly
         except (TypeError, ValueError):
             pass
+
+    # 3. Fall back to prices stored in the most recent search before this failure.
+    #    main.py stores result_prices on every successful search TOOL_CALL so
+    #    the actual fare shown to the user is always recoverable here.
+    fail_idx = next((i for i, s in enumerate(all_states) if s is state), len(all_states))
+    for prior in reversed(all_states[:fail_idx]):
+        if (
+            prior.state_name == StateName.TOOL_CALL
+            and prior.status != StateStatus.FAIL
+            and prior.metadata.get("tool_name") in ("search_flights", "search_hotels")
+        ):
+            prices = [p for p in prior.metadata.get("result_prices", []) if p is not None]
+            if prices:
+                # Use the highest price shown — represents the option the user likely selected
+                price = max(float(p) for p in prices)
+                # For hotels, multiply by nights if we stored check-in/out
+                if prior.metadata.get("tool_name") == "search_hotels":
+                    ci = prior.metadata.get("hotel_check_in", "")
+                    co = prior.metadata.get("hotel_check_out", "")
+                    if ci and co:
+                        try:
+                            nights = (date.fromisoformat(co) - date.fromisoformat(ci)).days
+                            if nights > 0:
+                                return price * nights
+                        except (TypeError, ValueError):
+                            pass
+                return price
+            break  # found the most recent search but no prices — stop looking
 
     return _FALLBACK_BOOKING_VALUE_USD
 
@@ -347,15 +372,18 @@ def get_summary(session_id: str) -> dict[str, Any]:
     experience_score = max(0, 100 - (latency_warnings * 10) - (failures * 25))
 
     # --- KPI 5: Revenue at Risk ---
-    # Only FAIL states on confirm_booking represent lost transactions.
-    # We extract the actual price from the tool call args stored in metadata —
-    # flight price_usd directly, hotel price_per_night_usd × nights.
-    # Falls back to $1,200 average only when no price data is available.
+    # Value of the MOST RECENT failed confirm_booking in this session.
+    # We use the last failure only — a retry is the same transaction, not a new one.
+    # Price is extracted from the tool call args (or looked up from the most recent
+    # search results if the LLM omitted price fields from the booking args).
     failed_bookings = [
         s for s in tool_calls
         if s.status == StateStatus.FAIL and s.metadata.get("tool_name") == "confirm_booking"
     ]
-    revenue_at_risk_usd = round(sum(_extract_booking_value(s) for s in failed_bookings), 2)
+    revenue_at_risk_usd = (
+        round(_extract_booking_value(failed_bookings[-1], states), 2)
+        if failed_bookings else 0.0
+    )
 
     return {
         # Raw counts — for frontend tables and detail views

@@ -352,6 +352,17 @@ class ChatAgent:
                         )
                         if isinstance(tool_result, dict) and "confirmation_number" in tool_result:
                             tool_state.metadata["confirmation_number"] = tool_result["confirmation_number"]
+                        # Store prices from search results so revenue calculation can use
+                        # actual fares even when confirm_booking args omit price fields.
+                        if tool_name in ("search_flights", "search_hotels") and isinstance(tool_result, list):
+                            tool_state.metadata["result_prices"] = [
+                                r.get("price_usd") or r.get("price_per_night_usd")
+                                for r in tool_result if isinstance(r, dict)
+                            ]
+                            # Also store check-in/check-out for hotel night calculation
+                            if tool_name == "search_hotels" and tool_result:
+                                tool_state.metadata["hotel_check_in"] = tool_result[0].get("check_in")
+                                tool_state.metadata["hotel_check_out"] = tool_result[0].get("check_out")
 
                     except HTTPException as exc:
                         # Chaos mode 500 — we catch here so the LLM can respond
