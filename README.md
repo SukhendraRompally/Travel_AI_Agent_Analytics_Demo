@@ -1,7 +1,6 @@
-# Expedia AI Travel Agent — Conviva Observability Demo
+# AI Travel Agent — Analytics & Observability Demo
 
-> Built to demonstrate Experience-Centric AI observability: tracking every phase of an agentic workflow in real-time to surface latency, failures, and user friction — the same philosophy Conviva applies to video delivery, applied to AI agents.
-
+> Built to demonstrate Experience-Centric AI observability: tracking every phase of an agentic workflow in real-time to surface latency, failures, and user friction.
 ---
 
 ## What This Is
