@@ -8,7 +8,7 @@
 
 This is **not just a chatbot**. It's an **Observability Platform for Agentic AI**.
 
-The Expedia Travel Concierge is the demo vehicle. The real product is the telemetry engine underneath it — a system that answers:
+The Travel Intelligence Assist is the demo vehicle. The real product is the telemetry engine underneath it — a system that answers:
 
 - *Where* in the agent pipeline is time being lost?
 - *Which* external service call caused a failure?
@@ -35,7 +35,7 @@ React Frontend (Replit)
 │  ┌──────────────┐    ┌──────────────────┐    ┌───────────────────┐  │     │
 │  │ telemetry.py │    │    main.py       │    │   services.py     │  │     │
 │  │              │    │                  │    │                   │  │     │
-│  │ SessionStore │◄───│  ChatAgent       │───►│  MockExpedia      │  │     │
+│  │ SessionStore │◄───│  ChatAgent       │───►│  MockTravel      │  │     │
 │  │ StateObject  │    │  ├─INTENT_MAP    │    │  search_flights   │  │     │
 │  │ record_state │    │  ├─LLM_REASONING │    │  search_hotels    │  │     │
 │  │ get_summary  │    │  ├─TOOL_CALL     │    │  confirm_booking  │  │     │
