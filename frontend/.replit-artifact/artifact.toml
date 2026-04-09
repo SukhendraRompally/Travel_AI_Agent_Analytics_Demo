@@ -1,0 +1,31 @@
+kind = "web"
+previewPath = "/"
+title = "Conviva Observer Console"
+version = "1.0.0"
+id = "artifacts/observer-console"
+router = "path"
+
+[[integratedSkills]]
+name = "react-vite"
+version = "1.0.0"
+
+[[services]]
+name = "web"
+paths = [ "/" ]
+localPort = 25372
+
+[services.development]
+run = "pnpm --filter @workspace/observer-console run dev"
+
+[services.production]
+build = [ "pnpm", "--filter", "@workspace/observer-console", "run", "build" ]
+publicDir = "artifacts/observer-console/dist/public"
+serve = "static"
+
+[[services.production.rewrites]]
+from = "/*"
+to = "/index.html"
+
+[services.env]
+PORT = "25372"
+BASE_PATH = "/"
