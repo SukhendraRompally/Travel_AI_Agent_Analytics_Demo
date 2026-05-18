@@ -1,8 +1,8 @@
 """
-main.py — Expedia AI Travel Agent
-Conviva-Style Experience Observability Demo | Principal Product Builder Interview
+main.py — Travel AI Agent
+Agentic Observability Demo
 
-This is the orchestration layer: FastAPI routes, the ChatAgent agentic loop,
+Orchestration layer: FastAPI routes, the ChatAgent agentic loop,
 and OpenAI function-calling instrumented at every phase with telemetry.
 
 Architecture at a glance:
@@ -13,10 +13,10 @@ Architecture at a glance:
 
 The telemetry summary on GET /trace separates:
   llm_reasoning_ms  (pure model think-time)
-  tool_call_ms      (MockExpedia I/O time)
+  tool_call_ms      (external service I/O time)
 
-This split is the Conviva insight: it tells you whether to optimize
-the model or the integrations — without it, "slow agent" is opaque.
+This split tells you whether to optimize the model or the integrations —
+without it, "slow agent" is opaque.
 """
 
 from __future__ import annotations
@@ -36,7 +36,7 @@ from openai import AsyncAzureOpenAI
 from pydantic import BaseModel
 
 import services  # module import (NOT from services import CHAOS_MODE) — see toggle endpoint
-from services import MockExpedia
+from services import MockTravelService
 from telemetry import (
     StateName, StateStatus, append_message, get_messages, get_summary, get_trace, record_state,
 )
@@ -163,7 +163,7 @@ TOOL_DEFINITIONS: list[dict[str, Any]] = [
     },
 ]
 
-SYSTEM_PROMPT = """You are a luxury travel concierge for Expedia, serving discerning clients \
+SYSTEM_PROMPT = """You are a luxury travel concierge, serving discerning clients \
 who expect precision, elegance, and zero friction in their travel arrangements.
 
 Your responsibilities:
@@ -228,7 +228,7 @@ class ChatAgent:
     Pipeline phases (each wrapped in record_state):
       1. INTENT_MAPPING     — classify what the user wants (fast LLM call)
       2. LLM_REASONING      — main reasoning call with tool definitions attached
-      3. TOOL_CALL          — execute each MockExpedia method the model requested
+      3. TOOL_CALL          — execute each MockTravelService method the model requested
       4. TOOL_RESPONSE      — inject tool results back into the message thread
       5. RESPONSE_SYNTHESIS — final LLM pass to compose the human-readable reply
                               (only fires if the last reasoning step had no text content)
@@ -241,7 +241,7 @@ class ChatAgent:
 
     def __init__(self, session_id: str) -> None:
         self.session_id = session_id
-        self.expedia = MockExpedia()
+        self.travel_service = MockTravelService()
         self.llm = AsyncAzureOpenAI(
             api_key=os.getenv("AZURE_OPENAI_KEY"),
             azure_endpoint=os.getenv("AZURE_OPENAI_ENDPOINT"),
@@ -492,19 +492,19 @@ class ChatAgent:
     async def _call_search_flights(
         self, origin: str, destination: str, date: str
     ) -> list[dict[str, Any]]:
-        return await self.expedia.search_flights(origin, destination, date)
+        return await self.travel_service.search_flights(origin, destination, date)
 
     async def _call_search_hotels(
         self, destination: str, check_in: str, check_out: str
     ) -> list[dict[str, Any]]:
-        return await self.expedia.search_hotels(destination, check_in, check_out)
+        return await self.travel_service.search_hotels(destination, check_in, check_out)
 
     async def _call_confirm_booking(
         self, booking_type: str, details: dict[str, Any] | None = None
     ) -> dict[str, Any]:
         # details is occasionally omitted by the LLM — default to empty dict
         # so the call doesn't hard-crash and the agent can handle it gracefully
-        return await self.expedia.confirm_booking(booking_type, details or {})
+        return await self.travel_service.confirm_booking(booking_type, details or {})
 
 
 # ---------------------------------------------------------------------------
@@ -516,16 +516,16 @@ async def lifespan(app: FastAPI):
     missing = [k for k in REQUIRED_ENV_VARS if not os.getenv(k)]
     if missing:
         raise RuntimeError(
-            f"ExpediaAI cannot start — missing environment variables: {missing}\n"
+            f"Travel AI Agent cannot start — missing environment variables: {missing}\n"
             "Copy .env.example to .env and fill in your Azure OpenAI credentials."
         )
     logger.info(
-        "ExpediaAI Travel Agent started | Deployment: %s | Port: 8002 | Chaos: %s",
+        "Travel AI Agent started | Deployment: %s | Chaos: %s",
         os.getenv("AZURE_OPENAI_DEPLOYMENT_NAME"),
         services.CHAOS_MODE,
     )
     yield
-    logger.info("ExpediaAI Travel Agent shutdown.")
+    logger.info("Travel AI Agent shutdown.")
 
 
 # ---------------------------------------------------------------------------
@@ -533,19 +533,17 @@ async def lifespan(app: FastAPI):
 # ---------------------------------------------------------------------------
 
 app = FastAPI(
-    title="Expedia AI Travel Agent",
+    title="Travel AI Agent",
     description=(
-        "Experience-Centric AI travel concierge with Conviva-style agentic "
-        "state telemetry. Tracks INTENT_MAPPING, LLM_REASONING, TOOL_CALL, "
-        "TOOL_RESPONSE, and RESPONSE_SYNTHESIS phases with millisecond precision. "
-        "Built for Principal Product Builder interview demonstration at Conviva."
+        "Agentic travel concierge with real-time observability. "
+        "Tracks INTENT_MAPPING, LLM_REASONING, TOOL_CALL, "
+        "TOOL_RESPONSE, and RESPONSE_SYNTHESIS phases with millisecond precision."
     ),
     version="1.0.0",
     lifespan=lifespan,
 )
 
-# CORS: open to all origins so the Replit React frontend can poll without restriction.
-# This is intentional for the demo environment.
+# CORS: open to all origins so the frontend can reach the API cross-domain.
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -611,16 +609,16 @@ async def chat(request: ChatRequest) -> ChatResponse:
 async def get_trace_endpoint(session_id: str) -> TraceResponse:
     """
     Returns the full chronological timeline of all captured StateObjects
-    for the given session, plus a Conviva-style summary.
+    for the given session, plus an observability summary.
 
     Summary KPI fields (all computed server-side):
       total_latency_s       — wall-clock seconds for the full turn
       success_rate_pct      — % of tool calls that didn't FAIL
       experience_score      — 0–100 UX quality score (−10/warn, −25/fail)
       revenue_at_risk_usd   — failed tool calls × $1,200 avg booking value
-      reasoning_ratio_pct   — LLM think-time as % of total (Conviva insight)
+      reasoning_ratio_pct   — LLM think-time as % of total
       llm_reasoning_ms      — pure model latency, isolated from tool I/O
-      tool_call_ms          — Expedia API latency, isolated from model
+      tool_call_ms          — external API latency, isolated from model
     """
     states = get_trace(session_id)
     summary = get_summary(session_id)
@@ -640,18 +638,14 @@ async def toggle_chaos() -> ChaosToggleResponse:
 
     When CHAOS_MODE is True:
       - search_flights and search_hotels lag 4.5–6.5s (always LATENCY_WARN)
-      - confirm_booking sleeps 4 seconds then raises HTTP 500:
-        'Automation Error: DOM Selector #checkout-button not found (Stagehand Timeout)'
+      - confirm_booking sleeps then raises HTTP 500 with a structured error
 
     In the telemetry trace, this produces:
       - TOOL_CALL StateObjects with status=LATENCY_WARN on all searches
       - A TOOL_CALL StateObject with status=FAIL on confirm_booking
-      - duration_ms ≈ 4000 on the failure (timeout period is visible)
+      - duration_ms reflects actual sleep duration
       - metadata.chaos_triggered = true
-      - metadata.error_detail = the structured DOM selector error dict
-
-    This is the killer demo feature: the telemetry system captures not just
-    that a failure occurred, but the full context of WHY and HOW LONG it took.
+      - metadata.error_detail = the structured error dict
     """
     services.CHAOS_MODE = not services.CHAOS_MODE
     enabled = services.CHAOS_MODE

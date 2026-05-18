@@ -1,6 +1,6 @@
 kind = "web"
 previewPath = "/"
-title = "Conviva Observer Console"
+title = "Travel AI Observer"
 version = "1.0.0"
 id = "artifacts/observer-console"
 router = "path"

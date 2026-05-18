@@ -1,7 +1,7 @@
 """
-services.py — Mock Expedia Service Layer
+services.py — Mock Travel Service Layer
 
-Simulates the Expedia booking API with realistic async latency.
+Simulates a travel booking API with realistic async latency.
 Every method sleeps for 1.5–4.0 seconds to mirror real booking API
 response times — ensuring the telemetry system reliably surfaces
 LATENCY_WARN states during demos.
@@ -59,7 +59,7 @@ CHAOS_SCENARIOS: list[dict[str, Any]] = [
         "error_type": "INVENTORY_DEPLETED",
         "target": "booking-api/reserve",
         "message": "Booking rejected: Selected fare is no longer available — seat sold between search and checkout.",
-        "automation_framework": "ExpediaAPI",
+        "automation_framework": "BookingAPI",
         "timeout_ms": 500,
     },
     {
@@ -73,9 +73,9 @@ CHAOS_SCENARIOS: list[dict[str, Any]] = [
     {
         "sleep_s": 1.0,
         "error_type": "BOOKING_API_503",
-        "target": "api.expedia.com/v3/bookings",
+        "target": "booking-api/v3/bookings",
         "message": "Booking API unavailable: Service returned HTTP 503. Upstream provider temporarily down.",
-        "automation_framework": "ExpediaAPI",
+        "automation_framework": "BookingAPI",
         "timeout_ms": 1000,
     },
     {
@@ -83,7 +83,7 @@ CHAOS_SCENARIOS: list[dict[str, Any]] = [
         "error_type": "SESSION_EXPIRED",
         "target": "booking-session/validate",
         "message": "Booking session expired: Search session token is no longer valid. Please re-search.",
-        "automation_framework": "ExpediaAPI",
+        "automation_framework": "BookingAPI",
         "timeout_ms": 1000,
     },
     {
@@ -91,15 +91,15 @@ CHAOS_SCENARIOS: list[dict[str, Any]] = [
         "error_type": "PRICE_CHANGED",
         "target": "booking-api/price-lock",
         "message": "Fare no longer valid: Price increased since search. Booking rejected by pricing engine.",
-        "automation_framework": "ExpediaAPI",
+        "automation_framework": "BookingAPI",
         "timeout_ms": 800,
     },
 ]
 
 
-class MockExpedia:
+class MockTravelService:
     """
-    Simulated Expedia API layer with realistic async latency.
+    Simulated travel booking API layer with realistic async latency.
 
     All methods use asyncio.sleep(random.uniform(1.5, 4.0)) to mirror
     real booking API response times. With a 3000ms LATENCY_WARN threshold
@@ -138,7 +138,7 @@ class MockExpedia:
 
         return [
             {
-                "flight_id": f"EX-{random.randint(1000, 9999)}",
+                "flight_id": f"FL-{random.randint(1000, 9999)}",
                 "airline": "Delta Air Lines",
                 "flight_number": f"DL{random.randint(100, 999)}",
                 "origin": origin,
@@ -153,7 +153,7 @@ class MockExpedia:
                 "amenities": ["Lie-flat seat", "Premium dining", "Priority boarding"],
             },
             {
-                "flight_id": f"EX-{random.randint(1000, 9999)}",
+                "flight_id": f"FL-{random.randint(1000, 9999)}",
                 "airline": "Air France",
                 "flight_number": f"AF{random.randint(100, 999)}",
                 "origin": origin,
@@ -168,7 +168,7 @@ class MockExpedia:
                 "amenities": ["La Première suite", "Champagne service", "Direct aisle access"],
             },
             {
-                "flight_id": f"EX-{random.randint(1000, 9999)}",
+                "flight_id": f"FL-{random.randint(1000, 9999)}",
                 "airline": "American Airlines",
                 "flight_number": f"AA{random.randint(100, 999)}",
                 "origin": origin,
@@ -307,13 +307,13 @@ class MockExpedia:
         )
 
         return {
-            "confirmation_number": f"EXPD-{random.randint(100000, 999999)}",
+            "confirmation_number": f"TRVL-{random.randint(100000, 999999)}",
             "booking_type": booking_type,
             "status": "CONFIRMED",
             "details": details,
             "total_cost_usd": total_cost,
             "confirmation_email": "sent to traveler@example.com",
             "estimated_check_in": details.get("check_in", details.get("departure", "N/A")),
-            "support_line": "1-800-EXPEDIA",
+            "support_line": "1-800-TRAVEL-AI",
             "cancellation_window": "48 hours before departure/check-in",
         }

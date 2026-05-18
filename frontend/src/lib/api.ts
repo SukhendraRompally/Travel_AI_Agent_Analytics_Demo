@@ -1,4 +1,6 @@
-const BASE_PATH = "/api/proxy";
+// VITE_BACKEND_URL must be set in Vercel env vars to your Render backend URL.
+// For local dev, create frontend/.env.local with VITE_BACKEND_URL=http://localhost:8002
+const BACKEND_URL = (import.meta.env.VITE_BACKEND_URL as string | undefined) ?? "";
 
 export interface StateObject {
   state_name: string;
@@ -47,7 +49,7 @@ export interface HealthResponse {
 }
 
 export async function postChat(message: string, session_id: string): Promise<ChatResponse> {
-  const res = await fetch(`${BASE_PATH}/chat`, {
+  const res = await fetch(`${BACKEND_URL}/chat`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ message, session_id }),
@@ -57,13 +59,13 @@ export async function postChat(message: string, session_id: string): Promise<Cha
 }
 
 export async function getTrace(session_id: string): Promise<TraceResponse> {
-  const res = await fetch(`${BASE_PATH}/trace/${session_id}`);
+  const res = await fetch(`${BACKEND_URL}/trace/${session_id}`);
   if (!res.ok) throw new Error(`Trace failed: ${res.status}`);
   return res.json();
 }
 
 export async function postChaosToggle(): Promise<ChaosResponse> {
-  const res = await fetch(`${BASE_PATH}/chaos/toggle`, {
+  const res = await fetch(`${BACKEND_URL}/chaos/toggle`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
   });
@@ -72,7 +74,7 @@ export async function postChaosToggle(): Promise<ChaosResponse> {
 }
 
 export async function getHealth(): Promise<HealthResponse> {
-  const res = await fetch(`${BASE_PATH}/health`);
+  const res = await fetch(`${BACKEND_URL}/health`);
   if (!res.ok) throw new Error(`Health failed: ${res.status}`);
   return res.json();
 }

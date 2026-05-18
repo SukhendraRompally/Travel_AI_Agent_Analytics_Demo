@@ -1,6 +1,5 @@
 #!/bin/bash
-# Expedia AI Travel Agent — Principal Product Builder Interview Demo
-# Port 8002 (Typeface=8000, AsanaBot=8001)
+# Travel AI Agent — backend startup script
 
 set -e
 cd "$(dirname "$0")"
@@ -10,15 +9,17 @@ if [ ! -f .env ]; then
   exit 1
 fi
 
+PORT="${PORT:-8002}"
+
 echo ""
-echo "  ✈  Expedia AI Travel Agent"
+echo "  ✈  Travel AI Agent"
 echo "  ─────────────────────────────────────────"
-echo "  API:    http://0.0.0.0:8002"
-echo "  Docs:   http://localhost:8002/docs"
-echo "  Health: http://localhost:8002/health"
-echo "  Chaos:  POST http://localhost:8002/chaos/toggle"
-echo "  Trace:  GET  http://localhost:8002/trace/{session_id}"
+echo "  API:    http://0.0.0.0:${PORT}"
+echo "  Docs:   http://localhost:${PORT}/docs"
+echo "  Health: http://localhost:${PORT}/health"
+echo "  Chaos:  POST http://localhost:${PORT}/chaos/toggle"
+echo "  Trace:  GET  http://localhost:${PORT}/trace/{session_id}"
 echo "  ─────────────────────────────────────────"
 echo ""
 
-uvicorn main:app --host 0.0.0.0 --port 8002 --reload
+uvicorn main:app --host 0.0.0.0 --port "${PORT}"

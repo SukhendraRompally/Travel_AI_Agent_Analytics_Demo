@@ -1,10 +1,9 @@
 """
-telemetry.py — Conviva-Style Agentic State Tracking
+telemetry.py — Agentic State Tracking
 
-This module is the observability core of the Expedia AI Travel Agent.
-It tracks every phase of the agent's reasoning pipeline as discrete,
-timed StateObjects — enabling real-time identification of latency,
-failures, and friction in the agentic workflow.
+Observability core of the Travel AI Agent. Tracks every phase of the agent's
+reasoning pipeline as discrete, timed StateObjects — enabling real-time
+identification of latency, failures, and friction in the agentic workflow.
 
 Architecture principle: Telemetry is a first-class citizen.
 The record_state context manager makes instrumentation impossible to forget —
@@ -23,7 +22,7 @@ from pydantic import BaseModel, Field
 
 logger = logging.getLogger(__name__)
 
-# Conviva insight: anything over 3 seconds in an agentic flow is a UX friction event.
+# Anything over 3 seconds in an agentic flow is a UX friction event.
 LATENCY_WARN_THRESHOLD_MS: float = 3000.0
 
 
@@ -32,22 +31,16 @@ LATENCY_WARN_THRESHOLD_MS: float = 3000.0
 # ---------------------------------------------------------------------------
 
 class StateName(str, Enum):
-    """
-    The five phases of the agentic pipeline — analogous to Conviva's
-    video delivery states (Buffering, Playing, Stalled, etc.) but for AI agents.
-    """
+    """The five phases of the agentic pipeline."""
     INTENT_MAPPING     = "INTENT_MAPPING"      # Classifying what the user wants
     LLM_REASONING      = "LLM_REASONING"       # Model deciding what to do next
-    TOOL_CALL          = "TOOL_CALL"           # Calling a MockExpedia service
+    TOOL_CALL          = "TOOL_CALL"           # Calling an external service
     TOOL_RESPONSE      = "TOOL_RESPONSE"       # Injecting tool result into thread
     RESPONSE_SYNTHESIS = "RESPONSE_SYNTHESIS"  # Final LLM pass to compose reply
 
 
 class StateStatus(str, Enum):
-    """
-    Outcome classification for each state — maps directly to what a Conviva
-    dashboard would show: green (SUCCESS), yellow (LATENCY_WARN), red (FAIL).
-    """
+    """Outcome classification for each state: green (SUCCESS), yellow (LATENCY_WARN), red (FAIL)."""
     SUCCESS      = "SUCCESS"
     FAIL         = "FAIL"
     LATENCY_WARN = "LATENCY_WARN"
@@ -71,7 +64,7 @@ class StateObject(BaseModel):
     duration_ms:  Milliseconds between start and end (computed, never caller-set)
     status:       SUCCESS / FAIL / LATENCY_WARN
     metadata:     Caller-enriched context — tool args, model params, result
-                  snippets, chaos flags, etc. This is where the Conviva-level
+                  snippets, chaos flags, etc. This is where the
                   diagnostic detail lives.
     """
     state_name:  StateName
@@ -160,7 +153,7 @@ async def record_state(
 
     Usage:
         async with record_state(session_id, StateName.TOOL_CALL, {"tool": "search_flights"}) as state:
-            result = await expedia.search_flights(origin, dest, date)
+            result = await travel_service.search_flights(origin, dest, date)
             state.metadata["result_count"] = len(result)   # enrich mid-flight
 
     The StateObject is yielded so callers can attach result data before
@@ -301,14 +294,11 @@ def get_summary(session_id: str) -> dict[str, Any]:
     """
     Computes aggregate statistics over a session's trace.
 
-    The key Conviva insight: llm_reasoning_ms vs tool_call_ms tells you
+    The key observability insight: llm_reasoning_ms vs tool_call_ms tells you
     WHERE the latency lives.
 
       llm_reasoning_ms high → model is the bottleneck (try a faster/cheaper model)
       tool_call_ms high     → integrations are the bottleneck (add caching, reduce round trips)
-
-    This separation is what makes this more than a chatbot — it's an
-    Experience Analytics system for AI agents.
     """
     states = _store.get_trace(session_id)
     if not states:
@@ -330,7 +320,7 @@ def get_summary(session_id: str) -> dict[str, Any]:
 
     total_ms = round(sum(s.duration_ms for s in states), 2)
 
-    # LLM vs Tool latency split (the core Conviva insight)
+    # LLM vs Tool latency split — the core observability insight
     llm_ms = round(
         sum(s.duration_ms for s in states if s.state_name == StateName.LLM_REASONING), 2
     )
@@ -350,7 +340,7 @@ def get_summary(session_id: str) -> dict[str, Any]:
     # --- KPI 2: Success Rate ---
     # Percentage of TOOL_CALL states that completed without FAIL.
     # We scope to TOOL_CALL only — LLM/intent states are internal overhead,
-    # not user-visible operations. This answers "what % of Expedia API calls worked?"
+    # not user-visible operations. This answers "what % of external API calls worked?"
     tool_calls = [s for s in states if s.state_name == StateName.TOOL_CALL]
     tool_calls_total = len(tool_calls)
     tool_calls_failed = sum(1 for s in tool_calls if s.status == StateStatus.FAIL)
@@ -361,12 +351,11 @@ def get_summary(session_id: str) -> dict[str, Any]:
     )
 
     # --- KPI 3: Reasoning Ratio ---
-    # LLM think-time as % of total — high means model is the bottleneck.
+    # LLM think-time as % of total; high means the model is the bottleneck.
     reasoning_ratio_pct = round((llm_ms / total_ms * 100) if total_ms > 0 else 0.0, 1)
 
     # --- KPI 4: Experience Score (0–100) ---
-    # Composite UX quality score analogous to Conviva's Video Quality Score.
-    # Starts at 100, deducted for every friction event:
+    # Composite UX quality score. Starts at 100, deducted for every friction event:
     #   -10 per LATENCY_WARN (slow but recoverable)
     #   -25 per FAIL (hard error — booking lost or search unavailable)
     experience_score = max(0, 100 - (latency_warnings * 10) - (failures * 25))
@@ -399,9 +388,8 @@ def get_summary(session_id: str) -> dict[str, Any]:
         "llm_reasoning_ms": llm_ms,
         "tool_call_ms": tool_ms,
 
-        # KPI cards — all computed here, frontend just displays
-        "success_rate_pct": success_rate_pct,        # KPI card: "Success Rate"
-        "reasoning_ratio_pct": reasoning_ratio_pct,  # KPI card: "Reasoning Ratio"
-        "experience_score": experience_score,         # KPI card: "Experience Score"
-        "revenue_at_risk_usd": revenue_at_risk_usd,  # KPI card: "Revenue at Risk"
+        "success_rate_pct": success_rate_pct,
+        "reasoning_ratio_pct": reasoning_ratio_pct,
+        "experience_score": experience_score,
+        "revenue_at_risk_usd": revenue_at_risk_usd,
     }
