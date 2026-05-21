@@ -320,3 +320,26 @@ npm run dev
 **LATENCY_WARN threshold**: Set to 3000ms in `telemetry.py`. With the mock service's 1.5–4.0s random lag, roughly half of all tool calls will exceed this in normal mode — making the observability dashboard immediately compelling without needing Chaos Mode.
 
 **Revenue at Risk calculation**: Uses the actual fare from search results when the LLM omits price fields in `confirm_booking` args, falling back to a $1,200 average only when no price data is available.
+
+---
+
+## Productionization Roadmap
+
+The current system is built for observability correctness — every agent phase is timed, classified, and queryable. What follows is what we'd add before running this at production scale.
+
+**Token & cost tracking (P0)**
+Every LLM call already records model and temperature; the missing fields are `prompt_tokens`, `completion_tokens`, and `cost_usd` per state, with cumulative `cost_per_session` in the `/trace` summary. Without this, you know whether the agent is slow but not whether it's expensive — and cost-per-query-type is the first question any platform or finance team asks before approving a scale-up.
+
+**Persistent storage (P0)**
+The `SessionStore` is an in-memory Python dict. Every service restart or redeploy wipes all trace history. The production path is a Postgres backend with a `sessions` table and a `states` table (foreign-keyed on `session_id`, indexed on `start_time`). That unlocks historical queries, incident post-mortems, and capacity planning — none of which are possible on data that vanishes between deploys.
+
+**Percentile latency via `GET /metrics` (P1)**
+The current `/trace` summary returns per-session averages. Production needs a `/metrics` endpoint that aggregates across all sessions: p50, p95, and p99 latency broken down by `state_name` and `tool_name`. Averages hide tail pain — a p95 `tool_call_ms` of 12 seconds means 1 in 20 users waits over 12 seconds, and that never surfaces in a mean. Percentiles are the unit SLOs are written in.
+
+**Session outcome funnel (P2)**
+The system currently tracks whether the pipeline completed — not whether the user accomplished what they came for. Adding a `session_outcome` field (`TASK_COMPLETED`, `ABANDONED`, `ERROR_RECOVERY`) and surfacing `turns_to_success` and `abandonment_rate` in `/metrics` closes that gap. An agent that runs successfully but leaves the user re-asking the same question is not a successful agent.
+
+**OpenTelemetry compatibility (P4)**
+The `StateObject` format is purpose-built and self-contained, which is fine for a standalone system. For production, mapping it to OTel spans (`state_name` → span name, `metadata` → span attributes, `duration_ms` → span duration) means traces plug directly into Datadog, Honeycomb, or Grafana without custom connectors. It's a one-time schema migration with no changes to the instrumentation logic.
+
+The `record_state` context manager, `StateObject` schema, and the `llm_reasoning_ms` / `tool_call_ms` latency split were all designed so the instrumentation layer stays stable as storage and aggregation are hardened around it.
