@@ -32,7 +32,7 @@ from typing import Any
 from dotenv import load_dotenv
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
-from openai import AsyncAzureOpenAI
+from openai import AsyncOpenAI
 from pydantic import BaseModel
 
 import services  # module import (NOT from services import CHAOS_MODE) — see toggle endpoint
@@ -59,10 +59,7 @@ logger = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 
 REQUIRED_ENV_VARS = [
-    "AZURE_OPENAI_KEY",
-    "AZURE_OPENAI_ENDPOINT",
-    "AZURE_OPENAI_DEPLOYMENT_NAME",
-    "AZURE_OPENAI_API_VERSION",
+    "DEEPSEEK_API_KEY",
 ]
 
 # ---------------------------------------------------------------------------
@@ -214,7 +211,7 @@ class HealthResponse(BaseModel):
     status: str
     timestamp: str
     chaos_mode: bool
-    azure_configured: bool
+    llm_configured: bool
 
 
 # ---------------------------------------------------------------------------
@@ -242,12 +239,11 @@ class ChatAgent:
     def __init__(self, session_id: str) -> None:
         self.session_id = session_id
         self.travel_service = MockTravelService()
-        self.llm = AsyncAzureOpenAI(
-            api_key=os.getenv("AZURE_OPENAI_KEY"),
-            azure_endpoint=os.getenv("AZURE_OPENAI_ENDPOINT"),
-            api_version=os.getenv("AZURE_OPENAI_API_VERSION"),
+        self.llm = AsyncOpenAI(
+            api_key=os.getenv("DEEPSEEK_API_KEY"),
+            base_url="https://api.deepseek.com",
         )
-        self.deployment = os.getenv("AZURE_OPENAI_DEPLOYMENT_NAME", "gpt-4o")
+        self.deployment = os.getenv("DEEPSEEK_MODEL", "deepseek-chat")
         # Dispatch table maps OpenAI tool name → coroutine function
         self._tool_dispatch: dict[str, Any] = {
             "search_flights":  self._call_search_flights,
@@ -517,11 +513,11 @@ async def lifespan(app: FastAPI):
     if missing:
         raise RuntimeError(
             f"Travel AI Agent cannot start — missing environment variables: {missing}\n"
-            "Copy .env.example to .env and fill in your Azure OpenAI credentials."
+            "Copy .env.example to .env and fill in your DeepSeek credentials."
         )
     logger.info(
-        "Travel AI Agent started | Deployment: %s | Chaos: %s",
-        os.getenv("AZURE_OPENAI_DEPLOYMENT_NAME"),
+        "Travel AI Agent started | Model: %s | Chaos: %s",
+        os.getenv("DEEPSEEK_MODEL", "deepseek-chat"),
         services.CHAOS_MODE,
     )
     yield
@@ -567,9 +563,7 @@ async def health() -> HealthResponse:
         status="healthy",
         timestamp=datetime.now(timezone.utc).isoformat(),
         chaos_mode=services.CHAOS_MODE,
-        azure_configured=bool(
-            os.getenv("AZURE_OPENAI_KEY") and os.getenv("AZURE_OPENAI_ENDPOINT")
-        ),
+        llm_configured=bool(os.getenv("DEEPSEEK_API_KEY")),
     )
 
 
